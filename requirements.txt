@@ -7,3 +7,4 @@ mcp>=1.0.0
 pandas>=2.2.2
 numpy>=2.0.1
 python-multipart>=0.0.9
+google-cloud-secret-manager>=2.21.0

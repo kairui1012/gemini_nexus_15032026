@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 from google import genai
+from google.cloud import secretmanager
 from tools.mcp_server import health_check, summarize_csv, word_count
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
@@ -27,22 +28,54 @@ default_prompt = (
     else "You are a quantitative data analysis expert. Answer clearly and concisely."
 )
 
+
+def _read_secret(secret_id: str, project_id: str) -> str:
+    client = secretmanager.SecretManagerServiceClient()
+    name = f"projects/{project_id}/secrets/{secret_id}/versions/latest"
+    response = client.access_secret_version(request={"name": name})
+    return response.payload.data.decode("utf-8").strip()
+
 API_KEY = os.getenv("VERTEX_API_KEY", "")
+AUTH_MODE = os.getenv("VERTEX_AUTH_MODE", "iam").strip().lower()
+PROJECT_ID = os.getenv("VERTEX_PROJECT_ID", "").strip()
+VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1").strip()
 MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-2.5-flash")
+GSM_PROJECT_ID = os.getenv("GSM_PROJECT_ID", "").strip() or PROJECT_ID
+GSM_VERTEX_API_KEY_SECRET = os.getenv("GSM_VERTEX_API_KEY_SECRET", "").strip()
+GSM_SYSTEM_INSTRUCTION_SECRET = os.getenv("GSM_SYSTEM_INSTRUCTION_SECRET", "").strip()
 ANALYSIS_MAX_RETRIES = int(os.getenv("ANALYSIS_MAX_RETRIES", "3"))
 ANALYSIS_TIMEOUT_SECONDS = int(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "45"))
 SYSTEM_INSTRUCTION = os.getenv(
     "VERTEX_SYSTEM_INSTRUCTION",
     default_prompt,
 )
+
+if GSM_SYSTEM_INSTRUCTION_SECRET and GSM_PROJECT_ID:
+    try:
+        SYSTEM_INSTRUCTION = _read_secret(GSM_SYSTEM_INSTRUCTION_SECRET, GSM_PROJECT_ID)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load system instruction from Secret Manager: {exc}")
+
+if AUTH_MODE == "api_key" and not API_KEY and GSM_VERTEX_API_KEY_SECRET and GSM_PROJECT_ID:
+    try:
+        API_KEY = _read_secret(GSM_VERTEX_API_KEY_SECRET, GSM_PROJECT_ID)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load API key from Secret Manager: {exc}")
+
 ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
     if origin.strip()
 ]
 
-if not API_KEY:
-    raise RuntimeError("Missing VERTEX_API_KEY in .env")
+if AUTH_MODE not in {"iam", "api_key"}:
+    raise RuntimeError("VERTEX_AUTH_MODE must be either 'iam' or 'api_key'")
+
+if AUTH_MODE == "api_key" and not API_KEY:
+    raise RuntimeError("Missing VERTEX_API_KEY in .env when VERTEX_AUTH_MODE=api_key")
+
+if AUTH_MODE == "iam" and not PROJECT_ID:
+    raise RuntimeError("Missing VERTEX_PROJECT_ID in .env when VERTEX_AUTH_MODE=iam")
 
 # 1. Initialize FastAPI app
 app = FastAPI()
@@ -56,8 +89,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 3. Initialize API-key based Gemini client
-client = genai.Client(api_key=API_KEY)
+# 3. Initialize Gemini client (IAM for production, API key for local/dev fallback)
+if AUTH_MODE == "iam":
+    client = genai.Client(vertexai=True, project=PROJECT_ID, location=VERTEX_LOCATION)
+else:
+    client = genai.Client(api_key=API_KEY)
 
 # 4. Define request payload model from frontend
 class ChatRequest(BaseModel):

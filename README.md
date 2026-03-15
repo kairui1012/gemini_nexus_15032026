@@ -1,8 +1,14 @@
-# Quantitative Forge Chat: Autonomous Data Swarm Studio
+# Track B: Quantitative Forge
+
+## Quantitative Forge Chat: Autonomous Data Swarm Studio
+
+This repository is the Track B: Quantitative Forge project.
 
 Quantitative Forge Chat is a full-stack autonomous analytics system built with React (frontend) and FastAPI (backend). It accepts natural-language analysis tasks, supports CSV upload, generates executable Python analysis logic, retries on errors, and returns structured insights.
 
-## System Architecture Diagram (A2A Flow)
+## Functional Diagram (NotebookLM-Generated A2A Flow)
+
+Diagram source note: this A2A functional diagram is documented as NotebookLM/NoteboomLM generated for Track B submission context.
 
 ```mermaid
 flowchart LR
@@ -47,7 +53,7 @@ flowchart LR
 
 - Node.js 18+
 - Python 3.10+
-- Gemini/Vertex API key
+- Google Cloud project with Vertex AI enabled
 
 ### 2) Environment Setup
 
@@ -59,10 +65,53 @@ cp .env.example .env
 
 Required variables:
 
-- `VERTEX_API_KEY`
+- `VERTEX_AUTH_MODE` (`iam` recommended for production)
+- `VERTEX_PROJECT_ID` (required for IAM mode)
+- `VERTEX_LOCATION` (default: `us-central1`)
 - `VERTEX_MODEL_NAME` (default: `gemini-2.5-flash`)
 - `ALLOWED_ORIGINS` (default: `http://localhost:5173`)
 - `VERTEX_SYSTEM_INSTRUCTION` (optional override)
+- `VERTEX_API_KEY` (only if using `api_key` mode)
+- `GSM_PROJECT_ID` (optional, defaults to `VERTEX_PROJECT_ID`)
+- `GSM_VERTEX_API_KEY_SECRET` (optional, used in `api_key` mode)
+- `GSM_SYSTEM_INSTRUCTION_SECRET` (optional)
+
+### 2.1) Google Secret Manager Setup (Recommended)
+
+Create secrets (example names):
+
+```bash
+gcloud secrets create vertex-api-key --replication-policy=automatic
+printf '%s' 'YOUR_REAL_API_KEY' | gcloud secrets versions add vertex-api-key --data-file=-
+
+gcloud secrets create vertex-system-instruction --replication-policy=automatic
+printf '%s' 'You are the core agent of Quantitative Forge Chat...' | gcloud secrets versions add vertex-system-instruction --data-file=-
+```
+
+Grant runtime identity access:
+
+```bash
+gcloud secrets add-iam-policy-binding vertex-api-key \
+  --member="serviceAccount:YOUR_RUNTIME_SA@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+
+gcloud secrets add-iam-policy-binding vertex-system-instruction \
+  --member="serviceAccount:YOUR_RUNTIME_SA@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+  --role="roles/secretmanager.secretAccessor"
+```
+
+Then set in `.env`:
+
+```env
+VERTEX_AUTH_MODE=iam
+VERTEX_PROJECT_ID=your-gcp-project-id
+VERTEX_LOCATION=us-central1
+GSM_PROJECT_ID=your-gcp-project-id
+GSM_SYSTEM_INSTRUCTION_SECRET=vertex-system-instruction
+
+# Optional if you still use api_key mode
+GSM_VERTEX_API_KEY_SECRET=vertex-api-key
+```
 
 ### 3) Install Dependencies
 
@@ -102,6 +151,99 @@ Open `http://localhost:5173`.
 python tools/mcp_server.py
 ```
 
+### 6) Docker Deployment Guide
+
+Use Docker Compose to run both frontend and backend with one command.
+
+Prerequisites:
+
+- Docker Engine 24+
+- Docker Compose v2+
+
+Step 1: Create environment file
+
+```bash
+cp .env.example .env
+```
+
+Step 2: Configure required variables in `.env`
+
+- `VERTEX_AUTH_MODE=iam`
+- `VERTEX_PROJECT_ID=<your-gcp-project-id>`
+- `VERTEX_LOCATION=us-central1`
+- `VERTEX_MODEL_NAME=gemini-2.5-flash`
+- `ALLOWED_ORIGINS=http://localhost:5173`
+- Optional: `GSM_PROJECT_ID`, `GSM_SYSTEM_INSTRUCTION_SECRET`, `GSM_VERTEX_API_KEY_SECRET`
+
+Step 2.1: Provide Google credentials for IAM mode (local Docker)
+
+Use one of these approaches:
+
+1. Use a service-account JSON file mounted as ADC inside backend container.
+2. Use a cloud runtime identity (Cloud Run/GKE/GCE) with no key file.
+
+For local Docker with a key file, run backend with:
+
+```bash
+docker compose run --rm \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/var/secrets/google/key.json \
+  -v /absolute/path/to/your-service-account.json:/var/secrets/google/key.json:ro \
+  backend
+```
+
+Then start full stack normally:
+
+```bash
+docker compose up -d --build
+```
+
+Step 3: Build and start services
+
+```bash
+docker compose up -d --build
+```
+
+Step 4: Verify deployment
+
+- Frontend: `http://localhost:5173`
+- Backend API is internal-only in compose network (not exposed publicly).
+- Backend health/tool test example:
+
+```bash
+curl -X POST http://localhost:5173/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"tool:health_check"}'
+```
+
+Operational commands:
+
+```bash
+# Show running containers
+docker compose ps
+
+# Stream logs
+docker compose logs -f
+
+# Restart services
+docker compose restart
+
+# Rebuild after code changes
+docker compose up -d --build
+
+# Stop services
+docker compose down
+
+# Stop and remove uploaded CSV data volume
+docker compose down -v
+```
+
+Notes:
+
+- Uploaded files are stored in a named Docker volume (`uploads_data`).
+- Frontend container serves static files via Nginx and proxies `/api` to backend.
+- For production security, prefer IAM mode and avoid API keys.
+- For secret management, prefer Google Secret Manager instead of plaintext `.env` values.
+
 ## API Quick Reference
 
 1. `POST /api/upload-csv`
@@ -130,13 +272,16 @@ python tools/mcp_server.py
 
 ## Troubleshooting
 
-1. `Missing VERTEX_API_KEY in .env`
-- Fill `.env` and restart backend.
+1. `Missing VERTEX_PROJECT_ID in .env when VERTEX_AUTH_MODE=iam`
+- Set `VERTEX_PROJECT_ID` and restart backend.
 
-2. Upload API fails
+2. `Failed to load ... from Secret Manager`
+- Check `GSM_PROJECT_ID` / secret names and IAM permissions (`roles/secretmanager.secretAccessor`).
+
+3. Upload API fails
 - Ensure dependencies are installed (`python-multipart` is required and included in `requirements.txt`).
 
-3. Frontend cannot reach backend
+4. Frontend cannot reach backend
 - Ensure backend runs on port `8000` and Vite proxy is active.
 
 ## Security Notes
