@@ -35,9 +35,18 @@ def _read_secret(secret_id: str, project_id: str) -> str:
     response = client.access_secret_version(request={"name": name})
     return response.payload.data.decode("utf-8").strip()
 
+
+def _infer_gcp_project_id() -> str:
+    return (
+        os.getenv("VERTEX_PROJECT_ID", "").strip()
+        or os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+        or os.getenv("GCP_PROJECT", "").strip()
+        or os.getenv("GCLOUD_PROJECT", "").strip()
+    )
+
 API_KEY = os.getenv("VERTEX_API_KEY", "")
 AUTH_MODE = os.getenv("VERTEX_AUTH_MODE", "iam").strip().lower()
-PROJECT_ID = os.getenv("VERTEX_PROJECT_ID", "").strip()
+PROJECT_ID = _infer_gcp_project_id()
 VERTEX_LOCATION = os.getenv("VERTEX_LOCATION", "us-central1").strip()
 MODEL_NAME = os.getenv("VERTEX_MODEL_NAME", "gemini-2.5-flash")
 GSM_PROJECT_ID = os.getenv("GSM_PROJECT_ID", "").strip() or PROJECT_ID
@@ -50,17 +59,25 @@ SYSTEM_INSTRUCTION = os.getenv(
     default_prompt,
 )
 
-if GSM_SYSTEM_INSTRUCTION_SECRET and GSM_PROJECT_ID:
-    try:
-        SYSTEM_INSTRUCTION = _read_secret(GSM_SYSTEM_INSTRUCTION_SECRET, GSM_PROJECT_ID)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load system instruction from Secret Manager: {exc}")
+STARTUP_CONFIG_ERROR = ""
 
-if AUTH_MODE == "api_key" and not API_KEY and GSM_VERTEX_API_KEY_SECRET and GSM_PROJECT_ID:
-    try:
-        API_KEY = _read_secret(GSM_VERTEX_API_KEY_SECRET, GSM_PROJECT_ID)
-    except Exception as exc:
-        raise RuntimeError(f"Failed to load API key from Secret Manager: {exc}")
+if GSM_SYSTEM_INSTRUCTION_SECRET:
+    if not GSM_PROJECT_ID:
+        STARTUP_CONFIG_ERROR = "GSM_SYSTEM_INSTRUCTION_SECRET is set but GSM_PROJECT_ID / VERTEX_PROJECT_ID is missing"
+    else:
+        try:
+            SYSTEM_INSTRUCTION = _read_secret(GSM_SYSTEM_INSTRUCTION_SECRET, GSM_PROJECT_ID)
+        except Exception as exc:
+            STARTUP_CONFIG_ERROR = f"Failed to load system instruction from Secret Manager: {exc}"
+
+if AUTH_MODE == "api_key" and not API_KEY and GSM_VERTEX_API_KEY_SECRET:
+    if not GSM_PROJECT_ID:
+        STARTUP_CONFIG_ERROR = STARTUP_CONFIG_ERROR or "GSM_VERTEX_API_KEY_SECRET is set but GSM_PROJECT_ID / VERTEX_PROJECT_ID is missing"
+    else:
+        try:
+            API_KEY = _read_secret(GSM_VERTEX_API_KEY_SECRET, GSM_PROJECT_ID)
+        except Exception as exc:
+            STARTUP_CONFIG_ERROR = STARTUP_CONFIG_ERROR or f"Failed to load API key from Secret Manager: {exc}"
 
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -69,13 +86,13 @@ ALLOWED_ORIGINS = [
 ]
 
 if AUTH_MODE not in {"iam", "api_key"}:
-    raise RuntimeError("VERTEX_AUTH_MODE must be either 'iam' or 'api_key'")
+    STARTUP_CONFIG_ERROR = STARTUP_CONFIG_ERROR or "VERTEX_AUTH_MODE must be either 'iam' or 'api_key'"
 
 if AUTH_MODE == "api_key" and not API_KEY:
-    raise RuntimeError("Missing VERTEX_API_KEY in .env when VERTEX_AUTH_MODE=api_key")
+    STARTUP_CONFIG_ERROR = STARTUP_CONFIG_ERROR or "Missing VERTEX_API_KEY when VERTEX_AUTH_MODE=api_key"
 
 if AUTH_MODE == "iam" and not PROJECT_ID:
-    raise RuntimeError("Missing VERTEX_PROJECT_ID in .env when VERTEX_AUTH_MODE=iam")
+    STARTUP_CONFIG_ERROR = STARTUP_CONFIG_ERROR or "Missing VERTEX_PROJECT_ID/GOOGLE_CLOUD_PROJECT when VERTEX_AUTH_MODE=iam"
 
 # 1. Initialize FastAPI app
 app = FastAPI()
@@ -90,10 +107,15 @@ app.add_middleware(
 )
 
 # 3. Initialize Gemini client (IAM for production, API key for local/dev fallback)
-if AUTH_MODE == "iam":
-    client = genai.Client(vertexai=True, project=PROJECT_ID, location=VERTEX_LOCATION)
-else:
-    client = genai.Client(api_key=API_KEY)
+client = None
+if not STARTUP_CONFIG_ERROR:
+    try:
+        if AUTH_MODE == "iam":
+            client = genai.Client(vertexai=True, project=PROJECT_ID, location=VERTEX_LOCATION)
+        else:
+            client = genai.Client(api_key=API_KEY)
+    except Exception as exc:
+        STARTUP_CONFIG_ERROR = f"Failed to initialize Gemini client: {exc}"
 
 # 4. Define request payload model from frontend
 class ChatRequest(BaseModel):
@@ -265,6 +287,9 @@ def _should_run_quant_analysis(message: str, csv_file_path: str | None = None) -
 
 
 def _generate_python_analysis_code(user_message: str, csv_file_path: str, previous_error: str | None = None, previous_code: str | None = None) -> str:
+    if client is None:
+        raise RuntimeError(STARTUP_CONFIG_ERROR or "Gemini client is not initialized")
+
     repair_context = ""
     if previous_error:
         repair_context = (
@@ -466,6 +491,9 @@ async def upload_csv(file: UploadFile = File(...)):
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest):
     try:
+        if STARTUP_CONFIG_ERROR or client is None:
+            raise HTTPException(status_code=500, detail=f"Server configuration error: {STARTUP_CONFIG_ERROR or 'Gemini client unavailable'}")
+
         tool_result = _try_execute_tool_command(request.message)
         if tool_result is not None:
             return {
