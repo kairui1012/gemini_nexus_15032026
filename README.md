@@ -268,6 +268,8 @@ git push origin main
 Cloud Run build/deploy notes:
 
 - This backend Dockerfile is configured to listen on `${PORT}` (Cloud Run requirement).
+- The Docker image now includes a frontend build (`app/dist`) and serves it at `/`.
+- API endpoints remain under `/api/*` (`/api/chat`, `/api/upload-csv`, `/api/status`).
 - For production, set runtime env vars in Cloud Run service config (do not rely on local `.env`).
 - Prefer IAM + Secret Manager in Cloud Run, and avoid API key mode when possible.
 

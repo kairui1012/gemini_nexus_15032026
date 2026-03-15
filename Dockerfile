@@ -1,3 +1,12 @@
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /src/app
+COPY app/package*.json ./
+RUN npm ci
+
+COPY app/ ./
+RUN npm run build
+
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -11,6 +20,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project source.
 COPY . .
+
+# Include built frontend so Cloud Run root URL serves the UI directly.
+COPY --from=frontend-builder /src/app/dist /app/app/dist
 
 EXPOSE 8080
 

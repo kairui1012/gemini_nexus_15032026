@@ -7,6 +7,8 @@ import uuid
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -19,6 +21,8 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 UPLOAD_DIR = PROJECT_ROOT / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+FRONTEND_DIST_DIR = PROJECT_ROOT / "app" / "dist"
+FRONTEND_INDEX_FILE = FRONTEND_DIST_DIR / "index.html"
 
 PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "system_prompt.txt"
 
@@ -130,8 +134,8 @@ TOOL_REGISTRY = {
 }
 
 
-@app.get("/")
-async def root_status():
+@app.get("/api/status")
+async def api_status():
     return {
         "status": "ok",
         "service": "quantitative-forge-backend",
@@ -550,3 +554,34 @@ async def chat_with_ai(request: ChatRequest):
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Serve frontend static assets when app/dist exists (Cloud Run single-service deployment).
+if (FRONTEND_DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="frontend-assets")
+
+
+@app.get("/")
+async def serve_frontend_root():
+    if FRONTEND_INDEX_FILE.exists():
+        return FileResponse(str(FRONTEND_INDEX_FILE))
+    return {
+        "status": "ok",
+        "service": "quantitative-forge-backend",
+        "message": "Frontend build not found. Build app/dist and redeploy to serve UI at root.",
+    }
+
+
+@app.get("/{full_path:path}")
+async def serve_frontend_spa(full_path: str):
+    if full_path.startswith("api/") or full_path == "api" or full_path == "healthz":
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    target = FRONTEND_DIST_DIR / full_path
+    if target.exists() and target.is_file():
+        return FileResponse(str(target))
+
+    if FRONTEND_INDEX_FILE.exists():
+        return FileResponse(str(FRONTEND_INDEX_FILE))
+
+    raise HTTPException(status_code=404, detail="Not Found")
