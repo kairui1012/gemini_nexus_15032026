@@ -130,6 +130,26 @@ TOOL_REGISTRY = {
 }
 
 
+@app.get("/")
+async def root_status():
+    return {
+        "status": "ok",
+        "service": "quantitative-forge-backend",
+        "message": "Service is running. Use POST /api/chat or POST /api/upload-csv.",
+    }
+
+
+@app.get("/healthz")
+async def healthz():
+    return {
+        "status": "healthy",
+        "auth_mode": AUTH_MODE,
+        "project_id": PROJECT_ID,
+        "model": MODEL_NAME,
+        "configured": not bool(STARTUP_CONFIG_ERROR),
+    }
+
+
 ANALYSIS_KEYWORDS = (
     "analy",
     "insight",
