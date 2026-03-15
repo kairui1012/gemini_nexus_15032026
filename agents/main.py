@@ -4,6 +4,7 @@ import re
 import sys
 import subprocess
 import uuid
+import logging
 from tempfile import NamedTemporaryFile
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, UploadFile, File
@@ -15,6 +16,9 @@ from dotenv import load_dotenv
 from google import genai
 from google.cloud import secretmanager
 from tools.mcp_server import health_check, summarize_csv, word_count
+
+
+logger = logging.getLogger(__name__)
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -148,7 +152,6 @@ async def healthz():
     return {
         "status": "healthy",
         "auth_mode": AUTH_MODE,
-        "project_id": PROJECT_ID,
         "model": MODEL_NAME,
         "configured": not bool(STARTUP_CONFIG_ERROR),
     }
@@ -509,7 +512,8 @@ async def upload_csv(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.exception("Upload CSV failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # 5. Define backend API route
 @app.post("/api/chat")
@@ -552,7 +556,7 @@ async def chat_with_ai(request: ChatRequest):
             "source": "model",
         }
     except Exception as e:
-        print(f"Error: {e}")
+        logger.exception("Chat request failed: %s", e)
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
