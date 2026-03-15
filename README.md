@@ -313,10 +313,3 @@ Cloud Run build/deploy notes:
 4. Frontend cannot reach backend
 - Ensure backend runs on port `8000` and Vite proxy is active.
 
-## Security Notes
-
-- Never commit `.env`.
-- Keep API keys private.
-- Uploaded CSV files are local runtime artifacts in `uploads/`.
-
-
