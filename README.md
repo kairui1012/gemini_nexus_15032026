@@ -9,12 +9,28 @@ Quantitative Forge Chat is a full-stack autonomous analytics system built with R
 ## Functional Diagram (NotebookLM-Generated A2A Flow)
 
 Diagram source note: this A2A functional diagram is documented as NotebookLM/NoteboomLM generated for Track B submission context.
-
-![System Architecture](docs/images/unnamed.mmd)
+![System Architecture Diagram](docs/images/unnamed.png)
 
 ## System Architecture Diagram Link
 
-[View System Architecture Diagram](docs/images/architecture.mmd)
+```mermaid
+flowchart LR
+  U[User] --> F[Frontend React App]
+  F -->|POST /api/upload-csv| B[FastAPI Backend]
+  B -->|Store file| S[(uploads/)]
+  F -->|POST /api/chat + csv_file_path| B
+  B --> O[Orchestrator: route selection]
+  O --> T[Tool Mode]
+  O --> Q[Quant Engine]
+  O --> M[Model Chat Mode]
+  Q --> G[LLM code generation]
+  G --> E[Python execution sandbox]
+  E --> R[Execution Logic + Data Insights + Metrics]
+  T --> R
+  M --> R
+  R --> F
+  F --> U
+```
 
 Visual flow of how 3+ agents interact across upload, orchestration, tool execution, quantitative analysis, and response delivery.
 
