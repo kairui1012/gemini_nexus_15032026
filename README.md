@@ -244,6 +244,33 @@ Notes:
 - For production security, prefer IAM mode and avoid API keys.
 - For secret management, prefer Google Secret Manager instead of plaintext `.env` values.
 
+### 7) Cloud Run Deployment (Source Build)
+
+If Cloud Build fails with:
+
+`unable to evaluate symlinks in Dockerfile path: lstat /workspace/Dockerfile: no such file or directory`
+
+check these items first:
+
+1. Your latest commit must include `Dockerfile` at repository root.
+2. Push your local changes before triggering deploy.
+3. Trigger source repository and branch must point to the same updated commit.
+
+Recommended verification before deploy:
+
+```bash
+git status
+git add .
+git commit -m "Prepare Cloud Run deploy"
+git push origin main
+```
+
+Cloud Run build/deploy notes:
+
+- This backend Dockerfile is configured to listen on `${PORT}` (Cloud Run requirement).
+- For production, set runtime env vars in Cloud Run service config (do not rely on local `.env`).
+- Prefer IAM + Secret Manager in Cloud Run, and avoid API key mode when possible.
+
 ## API Quick Reference
 
 1. `POST /api/upload-csv`
