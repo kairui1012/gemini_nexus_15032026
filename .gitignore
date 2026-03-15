@@ -1,0 +1,12 @@
+# Local config
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Node modules
+app/node_modules/
+
+# Build artifacts
+app/dist/
