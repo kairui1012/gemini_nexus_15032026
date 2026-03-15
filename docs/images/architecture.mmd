@@ -1,0 +1,16 @@
+flowchart LR
+    U[User] --> F[Frontend React App]
+    F -->|POST /api/upload-csv| B[FastAPI Backend]
+    B -->|Store file| S[(uploads/)]
+    F -->|POST /api/chat + csv_file_path| B
+    B --> O[Orchestrator: route selection]
+    O --> T[Tool Mode]
+    O --> Q[Quant Engine]
+    O --> M[Model Chat Mode]
+    Q --> G[LLM code generation]
+    G --> E[Python execution sandbox]
+    E --> R[Execution Logic + Data Insights + Metrics]
+    T --> R
+    M --> R
+    R --> F
+    F --> U
